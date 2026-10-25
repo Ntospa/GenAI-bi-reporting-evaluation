@@ -1,0 +1,145 @@
+# Prototype configuration - single source of run parameters (reproducibility)
+version: "1.0"               # config/prompt spec version (recorded in per-run provenance)
+
+data:
+  source: csv                # synthetic | csv  (now: real AdventureWorks canonical CSV)
+  csv_path: "data/adventureworks_internetsales_canonical.csv"
+  csv_colmap:                # identity map - CSV already uses canonical headers
+    date: date
+    region: region
+    category: category
+    product: product
+    units: units
+    unit_price: unit_price
+    cost: cost
+    order_id: order_id       # SalesOrderNumber (for order-level AOV)
+  seed: 42                   # reproducible synthetic data (only when source: synthetic)
+  periods: ["2013-11", "2013-12"]   # only used by synthetic generator
+
+llm:
+  provider: ollama
+  base_url: "http://localhost:11434"
+  model: "llama3.1:8b"       # model used in the study
+  embed_model: "nomic-embed-text"
+  temperature: 0.2
+  top_p: 0.9
+  num_ctx: 8192
+  num_predict: 700      # max output tokens: bounds worst-case latency (>>150-250 word target,
+                        #   so normal reports are never truncated). Prevents runaway CPU timeouts.
+  timeout: 900          # per-call HTTP read timeout in seconds (was hard-coded 300)
+  retries: 2            # retry transient ReadTimeout/ConnectionError before failing
+  # NOTE: no single fixed seed here. RQ2 needs real run-to-run variability, so each run gets a
+  # different but reproducible seed = experiment.base_seed + run_index (see below).
+
+grounding:
+  use_rag: true              # hybrid: structured feed (always) + RAG for context
+  chroma_dir: "data/chroma"
+  context_dir: "context_docs"
+  top_k: 4
+
+experiment:
+  runs_per_scenario: 5       # N (RQ2 consistency)
+  base_seed: 100             # per-run seed = base_seed + run_index (0..N-1): reproducible + varied
+  ablation_rag_off: true     # RAG-context ablation (structured KPI feed present in both conditions)
+  # the one AI report per scenario used for blind qualitative eval (RQ3).
+  # select: median -> the median-faithfulness run within `tag` (representative, not max;
+  #   ties -> lowest seed). Deterministic. The selection metric (numeric faithfulness, RQ1) is
+  #   not the RQ3 outcome (perceived quality), so this is a representative-instance rule, not
+  #   cherry-picking. (Legacy: set `run: <n>` for a fixed-index instance instead.)
+  eval_primary: { tag: rag_on, select: median }
+  # NOTE: the `question` set below is identical to the human analyst task (Analyst Report Pack /
+  # Google Form),
+  # given to the AI unchanged. No persona/style add-ons (symmetry for a clean comparison).
+  scenarios:
+    - id: S1_period_performance
+      title: "Συνολική επίδοση περιόδου"
+      period: "2013-12"
+      # information parity: the November total is given to both the AI and the analysts, because
+      # Q2 asks for the size and direction of the change (absolute MoM change is derivable).
+      kpis: [total_revenue, revenue_growth_mom, total_units, aov, gross_margin,
+             "revenue_previous_period (2013-11)"]
+      question:
+        - "Ποια είναι η συνολική εικόνα εσόδων και όγκου πωλήσεων τον Δεκέμβριο 2013;"
+        - "Πώς συγκρίνεται η επίδοση με τον προηγούμενο μήνα (μέγεθος και κατεύθυνση της μεταβολής);"
+        - "Τι δείχνουν η μέση αξία παραγγελίας και το μεικτό περιθώριο για την επίδοση της περιόδου;"
+    - id: S2_region_category
+      title: "Κατανομή εσόδων ανά περιοχή και κατηγορία"
+      period: "2013-12"
+      kpis: [total_revenue, revenue_by_region, revenue_by_category, top_products]
+      question:
+        - "Πώς κατανέμονται τα έσοδα ανά κατηγορία; Υπολογίστε το μερίδιο κάθε κατηγορίας επί των συνολικών εσόδων και αναδείξτε ποιες έχουν τη μεγαλύτερη και τη μικρότερη συνεισφορά."
+        - "Πώς κατανέμονται τα έσοδα ανά περιοχή; Με βάση τα μερίδια, ποιες περιοχές ξεχωρίζουν θετικά ή αρνητικά;"
+        - "Ποια προϊόντα συνεισφέρουν περισσότερο στα έσοδα;"
+    - id: S3_trend_change
+      title: "Μεταβολή εσόδων Νοεμβρίου προς Δεκέμβριο 2013"
+      period: "2013-12"
+      # information parity: the AI and the analysts both receive the November total and the
+      # November revenue by category
+      kpis: [total_revenue, revenue_growth_mom, revenue_by_category,
+             "revenue_previous_period (2013-11)", "revenue_by_category (2013-11)"]
+      question:
+        - "Πώς μεταβλήθηκαν τα συνολικά έσοδα από τον Νοέμβριο στον Δεκέμβριο 2013 (μέγεθος και κατεύθυνση);"
+        - "Σε ποιες κατηγορίες εντοπίζονται οι μεγαλύτερες μεταβολές (θετικές/αρνητικές);"
+        - "Ποια κατηγορία παρουσιάζει τη μεγαλύτερη απόλυτη μεταβολή και πόσο συμβάλλει αυτή η μεταβολή στη συνολική μεταβολή των εσόδων;"
+    # S4 is AI-only (robustness / hallucination test); not part of the human baseline.
+    - id: S4_synthetic_groundtruth
+      title: "Σενάριο ελεγχόμενης αλήθειας-εδάφους"
+      period: "2013-12"
+      inject_drop: {category: "Bikes", factor: 0.6}   # known injected change (Dec only; Nov intact)
+      # same KPI families as S3: Nov levels make the change questions answerable from data, so S4
+      # tests robustness to the injected atypical truth (not hallucination from missing data).
+      kpis: [total_revenue, revenue_growth_mom, revenue_by_category,
+             "revenue_previous_period (2013-11)", "revenue_by_category (2013-11)"]
+      question:
+        - "Πώς μεταβλήθηκαν τα συνολικά έσοδα από τον Νοέμβριο στον Δεκέμβριο 2013 (μέγεθος και κατεύθυνση);"
+        - "Σε ποιες κατηγορίες εντοπίζονται οι μεγαλύτερες μεταβολές (θετικές/αρνητικές);"
+        - "Ποια κατηγορία παρουσιάζει τη μεγαλύτερη απόλυτη μεταβολή και πόσο συμβάλλει αυτή η μεταβολή στη συνολική μεταβολή των εσόδων;"
+
+validation:
+  numeric_tolerance_rel: 0.01   # 1% relative tolerance (rounding)
+
+# RQ3 blind qualitative evaluation (human study, see human_study/README.md).
+# Participant data are collected only under an approved ethics protocol and are never committed.
+rq3:
+  human_scenarios: [S1_period_performance, S2_region_category, S3_trend_change]  # S4 is AI-only
+  # two disjoint participant groups (locked design):
+  #   (a) authors  = n_analysts, write the reports; they never rate.
+  #   (b) raters   = n_raters,   rate the blind set; none of them authored a report.
+  # Full separation removes any self-rating and makes the blinding complete.
+  n_analysts: 5              # 5 independent human authors, each writes all 3 scenarios (15 human reports)
+  n_raters: 12              # planned rater pool (recruitment target 10-12). This value only sizes
+                            #   the pre-generated rater_assignment.csv; the analysis uses only the
+                            #   rater_ids actually present in results/rubric_scores.csv, so a lower
+                            #   realised n does not invalidate anything.
+  rater_prefix: "E"         # rater codes E1..E<n_raters> - deliberately disjoint from analyst codes
+                            #   A1..A<n_analysts>, so a code can never be ambiguous.
+  ai_per_scenario: 1        # one pre-specified AI report/scenario in the blind set (eval_primary)
+  blind_seed: 100           # fixed seed for neutral-ID shuffling (reproducible anonymisation)
+  # 1-5 Likert dimensions (locked). Analysis is descriptive/exploratory (n=3 scenarios):
+  # descriptives + Cliff's delta effect sizes (bootstrap CI) + Krippendorff's alpha (reliability
+  # check, bootstrap CI). no NHST / no multilevel models - the design does not support them.
+  dimensions: [factual_accuracy, completeness, analytical_reasoning,
+               clarity_coherence, decision_usefulness, trustworthiness]
+  source_guess: true        # exploratory "Human / AI / Unsure" - not a primary quality metric
+  free_text: []             # no free-text comments are collected
+  # Uniform presentation normalisation applied to all blind-set texts (human and AI alike) so that
+  # surface conventions cannot reveal the source. No other word and no number is changed, so RQ1
+  # (computed on the original AI texts) is unaffected. Counts per report -> private log.
+  presentation_normalisation:
+    single_paragraph: true
+    currency: {"EUR": "€"}
+    # entity labels: the AI feed carried English labels, the analysts' data Greek ones
+    labels: {"United Kingdom": "Ηνωμένο Βασίλειο", "United States": "Ηνωμένες Πολιτείες",
+             "Accessories": "Αξεσουάρ", "Bikes": "Ποδήλατα", "Clothing": "Ένδυση",
+             "Australia": "Αυστραλία", "Canada": "Καναδάς", "France": "Γαλλία",
+             "Germany": "Γερμανία"}
+  rater_form:
+    launch_not_before: ""             # optional ISO date guard, e.g. end of a withdrawal window
+    duration: "30–45 λεπτά"           # completion time stated to raters
+    info_sheet_url: ""                # link to your approved Information Sheet (required)
+
+paths:
+  data_dir: "data"
+  runs_dir: "runs"
+  reports_dir: "reports"
+  results_dir: "results"

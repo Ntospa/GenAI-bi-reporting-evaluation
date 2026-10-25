@@ -1,0 +1,10 @@
+# Core
+pandas>=2.0
+numpy>=1.24
+pyyaml>=6.0
+# RAG / embeddings (optional; needed only for non-mock full run)
+chromadb>=0.4
+# Ollama client is called via HTTP (requests); no SDK required
+requests>=2.31
+# Evaluation stats (optional)
+scipy>=1.10
