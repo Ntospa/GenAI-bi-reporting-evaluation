@@ -132,6 +132,10 @@ python -m src.rescore
 This reproduces `results/summary.json` exactly (overall faithfulness 0.931) and selects the same
 blind-evaluation reports. No Ollama is needed for this step.
 
+The strict-tolerance sensitivity analysis (a claim is credited only within half a unit of its last
+reported digit; overall faithfulness 0.867) is recomputed from the same files with
+`python -m src.sensitivity_strict`, which writes `results/sensitivity_strict.json`.
+
 **Reference results (S1–S3, `rag_on`, 15 runs)**
 
 | Scenario | Faithfulness | Hallucination rate | KPI coverage |
@@ -175,7 +179,7 @@ data/           canonical dataset
 prompts/        system and user prompt templates
 context_docs/   non-numeric material for RAG
 src/            pipeline: data_prep, kpi_engine, rag_index, generate, validate,
-                evaluate, pipeline, rescore, extractor_spotcheck
+                evaluate, pipeline, rescore, extractor_spotcheck, sensitivity_strict
 human_study/    RQ3 instruments and scripts
 ```
 

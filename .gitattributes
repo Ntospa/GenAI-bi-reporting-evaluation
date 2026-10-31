@@ -1,0 +1,3 @@
+# Keep the canonical dataset byte-exact on every platform, so that
+# source_csv_hash is always b55cbddf5950 (no line-ending conversion).
+data/adventureworks_internetsales_canonical.csv -text
